@@ -1,0 +1,839 @@
+{
+  "name": "04 — CRM Sync / Master Inbox",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 1. Intake & Validation  —  [DETERMINISTIC]\nWebhook intake with schema validation gate before anything touches downstream tables. Malformed payloads are logged, not dropped.",
+        "height": 170,
+        "width": 940,
+        "color": 6
+      },
+      "id": "fb2e8fe9-0000-0000-0000-000000000000",
+      "name": "SECTION 1 — Intake & Validation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Intent Classification  —  [REAL / FIXTURE]\nSingle-shot Gemini classification call (live) vs deterministic fixture classifier (demo). Output normalized to one schema regardless of source.",
+        "height": 170,
+        "width": 1160,
+        "color": 7
+      },
+      "id": "d0b672f4-0000-0000-0000-000000000000",
+      "name": "SECTION 2 — Intent Classification",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        840,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 3. Routing Decision  —  [DETERMINISTIC]\nBinary routing gate on classified intent. Non-interested replies are logged and terminate here — they never reach the CRM or Slack paths.",
+        "height": 170,
+        "width": 500,
+        "color": 6
+      },
+      "id": "208709cf-0000-0000-0000-000000000000",
+      "name": "SECTION 3 — Routing Decision",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 4. CRM Handoff  —  [HYBRID]\nAdapter-pattern insert simulates a CRM write via Postgres table standing in for a real CRM endpoint — swap-in point for live CRM API is isolated to this section.",
+        "height": 170,
+        "width": 500,
+        "color": 4
+      },
+      "id": "bbb660d8-0000-0000-0000-000000000000",
+      "name": "SECTION 4 — CRM Handoff",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 5. SLA Alerting  —  [REAL]\nReal Slack webhook call with explicit success/failure branching — continueOnFail + status check means a failed alert is logged, never silently swallowed.",
+        "height": 170,
+        "width": 1160,
+        "color": 5
+      },
+      "id": "a1ec1c31-0000-0000-0000-000000000000",
+      "name": "SECTION 5 — SLA Alerting",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        -500
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reply-received",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "2f779eb5-3354-5327-974f-c45a919e2640",
+      "name": "Receive Simulated Reply",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json.body || $json;\nif (!p || typeof p !== 'object' || !p.raw_reply_text) return [{json: {valid: false, error: 'raw_reply_text is required'}}];\nreturn [{json: {...p, valid: true, raw_reply_text: String(p.raw_reply_text).slice(0, 10000)}}];"
+      },
+      "id": "76af70bb-a1b7-5177-8274-898d98808cfb",
+      "name": "Validate Reply Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8224ff5e-7c7b-563f-a076-525ab557bc56",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "edd36d25-998c-563f-af23-f1f4cafe9f5b",
+      "name": "Payload Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.audit_log (workflow_name, event_type, status, details) VALUES ('04_crm_sync', 'reply_validation', 'rejected', jsonb_build_object('error', '={{ $json.error || 'invalid_payload' }}'));",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "e80394aa-f931-54ed-98b5-f1bff8d9ba3c",
+      "name": "Log Malformed Reply",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (\n  INSERT INTO agency_outbound.replies_inbox (send_queue_id, raw_reply_text, classification, crm_synced)\n  VALUES (NULLIF('={{ $json.send_queue_id || '' }}','')::bigint, '={{ $json.raw_reply_text.replace(/'/g, \"''\") }}', NULL, FALSE)\n  RETURNING id\n)\nSELECT id AS reply_id, '={{ $json.raw_reply_text.replace(/'/g, \"''\") }}' AS raw_reply_text, '={{ $json.lead_name || '' }}' AS lead_name, '={{ $json.lead_email || '' }}' AS lead_email FROM inserted;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "40d9bbe0-6c42-53f7-8467-8e3d0b84bcdf",
+      "name": "Insert Raw Reply",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => ({json: {...i.json, pilot_mode: $env.PILOT_MODE || 'fixture'}}));"
+      },
+      "id": "86b841de-25ed-50db-9342-5b2302787c71",
+      "name": "Read Classification Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0c7494ee-d71f-5a15-b4ef-acdd17cf8a2e",
+              "leftValue": "={{ $json.pilot_mode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3c962833-c19b-5c48-a595-5202eab862f1",
+      "name": "Use Live Reply Classification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/' + ($env.GEMINI_MODEL || 'gemini-3.5-flash-lite') + ':generateContent' }}",
+        "options": {
+          "timeout": 60000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY || 'REPLACE_IN_N8N_CREDENTIAL' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({contents: [{parts: [{text: 'Classify the reply into exactly one label: interested, not_interested, ooo, objection. Return JSON with keys classification and rationale. Reply text: ' + $json.raw_reply_text}]}], generationConfig: {temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 120}}) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "f57eb465-0dd9-5dd1-837e-a3b2d527772a",
+      "name": "Gemini — Classify Reply Intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Gemini API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = String($json.raw_reply_text || '').toLowerCase(); const classification = /interested|book|call|yes|curious/.test(t) ? 'interested' : /out of office|ooo|vacation/.test(t) ? 'ooo' : /not interested|unsubscribe|remove/.test(t) ? 'not_interested' : 'objection'; return [{json: {...$json, classification}}];"
+      },
+      "id": "3abcd2dc-3d02-5a7d-8f25-2daeb5a07d28",
+      "name": "Fixture Reply Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json;\nlet classification = r.classification;\ntry { const text = r.candidates?.[0]?.content?.parts?.[0]?.text; if (text) classification = JSON.parse(text).classification; } catch (e) {}\nconst allowed = ['interested', 'not_interested', 'ooo', 'objection'];\nreturn [{json: {...r, classification: allowed.includes(classification) ? classification : 'objection'}}];"
+      },
+      "id": "3136d622-373b-504d-96ae-a8ebb2f82f28",
+      "name": "Normalize Reply Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.replies_inbox SET classification = '={{ $json.classification }}' WHERE id = '={{ $json.reply_id }}' RETURNING id, classification\n)\nSELECT id AS reply_id, classification, '={{ $json.lead_name || '' }}' AS lead_name, '={{ $json.lead_email || '' }}' AS lead_email FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "42396977-a30d-5ea2-b62c-f6222abafbb6",
+      "name": "Update Reply Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "72d0ccfc-c9f5-52f5-918c-9b25c5d827f2",
+              "leftValue": "={{ $json.classification }}",
+              "rightValue": "interested",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2dc80b0a-bfe9-5238-83b5-01c6d1e8b778",
+      "name": "Interested Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (\n  INSERT INTO agency_outbound.crm_leads (reply_id, lead_name, lead_email, status)\n  VALUES ('={{ $json.reply_id }}', '={{ ($json.lead_name || 'Unknown contact').replace(/'/g, \"''\") }}', NULLIF('={{ $json.lead_email || '' }}',''), 'new_lead')\n  RETURNING id\n)\nSELECT id AS crm_lead_id, '={{ $json.reply_id }}'::bigint AS reply_id, '={{ $json.lead_name || 'Unknown contact' }}' AS lead_name, '={{ $json.lead_email || '' }}' AS lead_email FROM inserted;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "f77b4ea0-35dd-5f32-943a-06d7e32358e3",
+      "name": "Insert CRM Lead Adapter",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        -220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.replies_inbox SET crm_synced = TRUE WHERE id = '={{ $json.reply_id }}' RETURNING id\n)\nSELECT id AS reply_id, '={{ $json.crm_lead_id }}'::bigint AS crm_lead_id, '={{ $json.lead_name || 'Unknown contact' }}' AS lead_name, '={{ $json.lead_email || '' }}' AS lead_email FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "bd8cae5e-dddd-5d9f-b643-781e8782be02",
+      "name": "Mark Reply CRM Synced",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2420,
+        -220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9d55d7ba-37e4-54c7-a499-277b700e4be1",
+              "name": "crm_lead_id",
+              "type": "number",
+              "value": "={{ Number($json.crm_lead_id) }}"
+            },
+            {
+              "id": "1b97fef8-60fe-50e0-bdbd-cb5ee0e22c7c",
+              "name": "reply_id",
+              "type": "number",
+              "value": "={{ Number($json.reply_id) }}"
+            },
+            {
+              "id": "78498a69-e994-5143-94a2-c77959c54eae",
+              "name": "lead_email",
+              "type": "string",
+              "value": "={{ $json.lead_email || 'not supplied' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "06f1f456-933e-5f93-a78f-60d68ba7997e",
+      "name": "Prepare Slack Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/services/REPLACE_IN_N8N_ENV' }}",
+        "options": {
+          "timeout": 30000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({text: 'New interested lead — respond within 5 min. Email: ' + ($json.lead_email || 'not supplied')}) }}"
+      },
+      "id": "5f679232-9086-557a-994e-49937944c731",
+      "name": "Send Slack SLA Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        -220
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json; const status = Number(response.statusCode || 200); const slack_ok = !response.error && status >= 200 && status < 300; return [{json: {...$node['Prepare Slack Alert'].json, slack_ok, slack_response: response}}];"
+      },
+      "id": "6afdc255-2c34-5b19-9e7d-01a9af6a1343",
+      "name": "Normalize Slack Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ba3aa684-19a0-53f0-a7a4-0be8026c9c63",
+              "leftValue": "={{ $json.slack_ok }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0db86b2e-5cda-53fb-a975-1587d3647b83",
+      "name": "Slack Alert Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3300,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE agency_outbound.crm_leads SET sla_alert_sent = TRUE WHERE id = '={{ $json.crm_lead_id }}';",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "443e5759-b5bf-5268-ab39-90ee14a05ec2",
+      "name": "Mark SLA Alert Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3520,
+        -300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.audit_log (workflow_name, event_type, status, details) VALUES ('04_crm_sync', 'slack_sla_alert', 'retryable_failure', jsonb_build_object('crm_lead_id', '={{ $json.crm_lead_id }}'));",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "b7fe889d-ed21-546a-a10c-eba1a0eb3b7b",
+      "name": "Log Slack Alert Failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3520,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.audit_log (workflow_name, event_type, status, details) VALUES ('04_crm_sync', 'reply_classification', 'logged_only', jsonb_build_object('classification', '={{ $json.classification }}', 'reply_id', '={{ $json.id }}'));",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "326aa99e-4c28-5142-8d43-be577d4178bd",
+      "name": "Log Non-interested Reply",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        80
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**HYBRID** — reply validation, single-shot classification, and Slack SLA alert are real. The CRM destination is an adapter table in Postgres standing in for HubSpot/Salesforce; replace only `Insert CRM Lead Adapter` when a real CRM is approved. The webhook accepts a simulated payload so the demo is safe.",
+        "height": 250,
+        "width": 720
+      },
+      "id": "b04ae17b-b954-5293-8f77-1853c45b4752",
+      "name": "Hybrid — CRM Handoff",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        360
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive Simulated Reply": {
+      "main": [
+        [
+          {
+            "node": "Validate Reply Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Reply Payload": {
+      "main": [
+        [
+          {
+            "node": "Payload Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload Valid?": {
+      "main": [
+        [
+          {
+            "node": "Insert Raw Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Malformed Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Raw Reply": {
+      "main": [
+        [
+          {
+            "node": "Read Classification Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Classification Mode": {
+      "main": [
+        [
+          {
+            "node": "Use Live Reply Classification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Live Reply Classification?": {
+      "main": [
+        [
+          {
+            "node": "Gemini — Classify Reply Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fixture Reply Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini — Classify Reply Intent": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reply Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fixture Reply Classifier": {
+      "main": [
+        [
+          {
+            "node": "Normalize Reply Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reply Classification": {
+      "main": [
+        [
+          {
+            "node": "Update Reply Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Reply Classification": {
+      "main": [
+        [
+          {
+            "node": "Interested Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interested Reply?": {
+      "main": [
+        [
+          {
+            "node": "Insert CRM Lead Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Non-interested Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert CRM Lead Adapter": {
+      "main": [
+        [
+          {
+            "node": "Mark Reply CRM Synced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Reply CRM Synced": {
+      "main": [
+        [
+          {
+            "node": "Prepare Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Slack SLA Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack SLA Alert": {
+      "main": [
+        [
+          {
+            "node": "Normalize Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alert Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Mark SLA Alert Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Slack Alert Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "agency-outbound"
+    },
+    {
+      "name": "concept-project"
+    }
+  ]
+}

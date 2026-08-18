@@ -1,0 +1,522 @@
+{
+  "name": "00 — Signal Trigger / Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 1. Trigger & Mode Config  —  [DETERMINISTIC]\n6-hour schedule trigger + PILOT_MODE env read. Routes to live Apify call or fixture data — no workflow logic depends on which branch fires.",
+        "height": 170,
+        "width": 700,
+        "color": 6
+      },
+      "id": "c72fb3a5-0000-0000-0000-000000000000",
+      "name": "SECTION 1 — Trigger & Mode Config",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Signal Acquisition  —  [REAL / FIXTURE]\nLive: Apify job-board actor run-sync call. Fixture: deterministic 3-row sample set for demo/testing without burning Apify credits.",
+        "height": 170,
+        "width": 280,
+        "color": 4
+      },
+      "id": "6e02914b-0000-0000-0000-000000000000",
+      "name": "SECTION 2 — Signal Acquisition",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        600,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 3. Normalization  —  [DETERMINISTIC]\nSingle normalization layer collapses both branches into one schema (company_name, company_domain, signal_type) before downstream fan-out.",
+        "height": 170,
+        "width": 280,
+        "color": 6
+      },
+      "id": "5165dd39-0000-0000-0000-000000000000",
+      "name": "SECTION 3 — Normalization",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        840,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 4. Tech Stack Detection  —  [REAL]\nLive homepage fetch + regex-based tracking-script detection (no paid BuiltWith/Wappalyzer API). Merged back with job signals via append.",
+        "height": 170,
+        "width": 940,
+        "color": 4
+      },
+      "id": "cabe9997-0000-0000-0000-000000000000",
+      "name": "SECTION 4 — Tech Stack Detection",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 5. Persistence & Dedup  —  [DETERMINISTIC]\nPostgres-side dedup guard (WHERE NOT EXISTS) before insert. Every run logged to workflow_runs for audit trail — no silent drops.",
+        "height": 170,
+        "width": 720,
+        "color": 5
+      },
+      "id": "7e657c1f-0000-0000-0000-000000000000",
+      "name": "SECTION 5 — Persistence & Dedup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "b3323955-b482-5e5e-885d-6d7697c8543d",
+      "name": "Scan Signal Sources",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const mode = $env.PILOT_MODE || 'fixture'; return [{json: {pilot_mode: mode}}];"
+      },
+      "id": "1311402e-10ec-5bb8-ba78-7d901ad2c113",
+      "name": "Read Pilot Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8f69db34-646c-58ea-8bf5-b47b06c96797",
+              "leftValue": "={{ $json.pilot_mode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bf72b244-519b-58d1-a711-51639a572329",
+      "name": "Use Live Signal Source?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.apify.com/v2/acts/' + ($env.APIFY_ACTOR_ID || 'REPLACE_ACTOR_ID') + '/run-sync-get-dataset-items?clean=true&format=json' }}",
+        "options": {
+          "timeout": 90000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($env.APIFY_API_TOKEN || 'REPLACE_IN_N8N_ENV') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({keywords: ['customer support representative', 'support operations'], maxItems: 25}) }}"
+      },
+      "id": "d310f08f-86f8-5212-8da0-c871c1c0fc17",
+      "name": "Run Apify Job-board Actor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        -120
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date().toISOString();\nreturn [\n  {json: {source: 'job_post', company_name: 'Northstar Support', company_domain: 'northstarsupport.example', signal_type: 'hiring_support_reps', signal_detail: {title: 'Customer Support Representative', source: 'fixture'}, detected_at: now}},\n  {json: {source: 'tech_stack', company_name: 'Orbit Commerce', company_domain: 'orbitcommerce.example', signal_type: 'missing_tracking_script', signal_detail: {technology: 'analytics-missing', source: 'fixture'}, detected_at: now}},\n  {json: {source: 'job_post', company_name: 'Harbor SaaS', company_domain: 'harborsaas.example', signal_type: 'hiring_support_reps', signal_detail: {title: 'Support Operations Manager', source: 'fixture'}, detected_at: now}},\n];"
+      },
+      "id": "6d3ec141-d399-5807-b476-667f83ba4e01",
+      "name": "Load Fixture Signal Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json;\nconst rows = Array.isArray(raw) ? raw : (raw.items || raw.data || [raw]);\nconst out = [];\nfor (const row of rows) {\n  const company = row.company_name || row.company || row.organization || row.companyName;\n  const domain = row.company_domain || row.domain || row.companyDomain;\n  const title = row.title || row.job_title || row.position || '';\n  if (!company || !domain) continue;\n  if (title && !/(support|customer success|service operations)/i.test(title) && !row.signal_type) continue;\n  out.push({json: {source: row.source || 'job_post', company_name: company, company_domain: domain.replace(/^https?:\\/\\//, '').replace(/\\/$/, ''), signal_type: row.signal_type || 'hiring_support_reps', signal_detail: row.signal_detail || row, detected_at: row.detected_at || new Date().toISOString()}});\n}\nreturn out;"
+      },
+      "id": "bb71341f-9f36-5910-bdb5-0ccdc53f832e",
+      "name": "Normalize Job Signals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://' + $json.company_domain }}",
+        "options": {
+          "timeout": 20000
+        },
+        "responseFormat": "text"
+      },
+      "id": "e28c8660-4765-5ed6-9a2e-16146795d0be",
+      "name": "Fetch Target Homepage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        120
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "position",
+        "options": {}
+      },
+      "id": "2484d6be-a8f2-5beb-bfb7-5bdbebea84f5",
+      "name": "Merge Homepage Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $json;\nconst html = row.body || row.data || row.html || '';\nconst text = typeof html === 'string' ? html : JSON.stringify(html);\nconst tech = [];\nif (/gtag|googletagmanager|google-analytics/i.test(text)) tech.push('google_analytics');\nif (/segment\\.com|analytics\\.js/i.test(text)) tech.push('segment');\nif (/hotjar/i.test(text)) tech.push('hotjar');\nif (/intercom/i.test(text)) tech.push('intercom');\nif (tech.length === 0) tech.push('unknown_or_missing_tracking');\nreturn [{json: {...row, source: 'tech_stack', signal_type: tech.includes('unknown_or_missing_tracking') ? 'missing_tracking_script' : 'tracking_stack_detected', signal_detail: {...(row.signal_detail || {}), detected_technologies: tech}, detected_at: new Date().toISOString()}}];"
+      },
+      "id": "af4fab4a-c1e3-508b-817e-d3bfdb530322",
+      "name": "Detect Tech Stack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "7efd7725-a033-5ed6-b810-b401f689852d",
+      "name": "Merge Job and Tech Signals",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS exists_flag FROM agency_outbound.signal_events WHERE company_domain = '={{ $json.company_domain }}' AND signal_type = '={{ $json.signal_type }}' LIMIT 1;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "5d64210d-4143-5267-a809-ba9ec37ae8eb",
+      "name": "Dedup Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.signal_events (source, company_name, company_domain, signal_type, signal_detail, detected_at, status)\nSELECT '={{ $json.source }}', '={{ $json.company_name }}', '={{ $json.company_domain }}', '={{ $json.signal_type }}', '={{ JSON.stringify($json.signal_detail).replace(/'/g, \"''\") }}'::jsonb, COALESCE('={{ $json.detected_at }}'::timestamptz, NOW()), 'new'\nWHERE NOT EXISTS (\n  SELECT 1 FROM agency_outbound.signal_events WHERE company_domain = '={{ $json.company_domain }}' AND signal_type = '={{ $json.signal_type }}'\n);",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "e6878629-ddee-5071-bf27-6cf25949e399",
+      "name": "Insert Signal Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.workflow_runs (workflow_name, phase, status, rows_seen, finished_at) VALUES ('00_signal_trigger', 'signal_ingestion', 'success', 1, NOW());",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "74f1ac07-0eb0-5578-8cc5-f86e11df72b9",
+      "name": "Record Signal Ingest Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2420,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**REAL** — Apify Actor call, homepage fetch, and deterministic regex/header tech detection. No paid BuiltWith/Wappalyzer subscription is used. `PILOT_MODE=fixture` provides deterministic sample signals without external calls.",
+        "height": 220,
+        "width": 560
+      },
+      "id": "4244e65b-6d2a-50e7-8d88-92ba9a9810ad",
+      "name": "Real vs Simulated — Signal Ingestion",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        720,
+        360
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Scan Signal Sources": {
+      "main": [
+        [
+          {
+            "node": "Read Pilot Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Pilot Mode": {
+      "main": [
+        [
+          {
+            "node": "Use Live Signal Source?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Live Signal Source?": {
+      "main": [
+        [
+          {
+            "node": "Run Apify Job-board Actor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Fixture Signal Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Apify Job-board Actor": {
+      "main": [
+        [
+          {
+            "node": "Normalize Job Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Fixture Signal Events": {
+      "main": [
+        [
+          {
+            "node": "Normalize Job Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Job Signals": {
+      "main": [
+        [
+          {
+            "node": "Fetch Target Homepage",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Homepage Context",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Job and Tech Signals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Target Homepage": {
+      "main": [
+        [
+          {
+            "node": "Merge Homepage Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Homepage Context": {
+      "main": [
+        [
+          {
+            "node": "Detect Tech Stack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Tech Stack": {
+      "main": [
+        [
+          {
+            "node": "Merge Job and Tech Signals",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Job and Tech Signals": {
+      "main": [
+        [
+          {
+            "node": "Dedup Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup Check": {
+      "main": [
+        [
+          {
+            "node": "Insert Signal Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Signal Event": {
+      "main": [
+        [
+          {
+            "node": "Record Signal Ingest Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "agency-outbound"
+    },
+    {
+      "name": "concept-project"
+    }
+  ]
+}

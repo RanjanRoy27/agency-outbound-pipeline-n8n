@@ -1,0 +1,560 @@
+{
+  "name": "03 — Deliverability Simulation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 1. Trigger & Capacity Prep  —  [DETERMINISTIC]\n30-min poll. Daily send caps reset server-side before capacity is evaluated — avoids stale cap state across day boundaries.",
+        "height": 170,
+        "width": 720,
+        "color": 6
+      },
+      "id": "d30ee4aa-0000-0000-0000-000000000000",
+      "name": "SECTION 1 — Trigger & Capacity Prep",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Mailbox Allocation  —  [SIMULATED]\nReal round-robin + cap-enforcement logic, tested against mock mailbox rows. Hard-fails (throws) if zero mailboxes are registered — no silent drop of queued hooks.",
+        "height": 170,
+        "width": 720,
+        "color": 3
+      },
+      "id": "c742767c-0000-0000-0000-000000000000",
+      "name": "SECTION 2 — Mailbox Allocation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 3. Queue Persistence  —  [DETERMINISTIC]\nAtomic-style chain: queue row inserted, mailbox counter incremented, source hook marked queued. Full state trail for every send decision.",
+        "height": 170,
+        "width": 720,
+        "color": 5
+      },
+      "id": "9c76b937-0000-0000-0000-000000000000",
+      "name": "SECTION 3 — Queue Persistence",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 4. Sandbox Send Path  —  [SIMULATED]\nDRY_RUN=true by default — no purchased domains, warm-up network, or Smartlead/Instantly subscription. Optional live branch sends through exactly one sandbox Gmail mailbox only.",
+        "height": 170,
+        "width": 940,
+        "color": 3
+      },
+      "id": "27911e7c-0000-0000-0000-000000000000",
+      "name": "SECTION 4 — Sandbox Send Path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1720,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "98e3ce13-21e5-5089-b048-f1ac806e6d4f",
+      "name": "Poll Queued Hooks",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE agency_outbound.mailbox_registry SET sent_today = 0, last_reset_date = CURRENT_DATE WHERE last_reset_date < CURRENT_DATE;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "082d5f22-78be-55c7-94fe-43a084e4f9c8",
+      "name": "Reset Daily Mailbox Caps",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(json_agg(h), '[]'::json) AS hooks,\n       (SELECT COALESCE(json_agg(m), '[]'::json) FROM agency_outbound.mailbox_registry m) AS mailboxes\nFROM (\n  SELECT h.*, p.email, p.full_name, p.email AS prospect_email\n  FROM agency_outbound.personalization_hooks h\n  JOIN agency_outbound.prospects_enriched p ON p.id = h.prospect_id\n  WHERE h.status = 'new' AND p.email IS NOT NULL\n  ORDER BY h.generated_at ASC LIMIT 25\n) h;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "a4239f6f-848c-569e-a620-8fe7c9113665",
+      "name": "Fetch Hooks and Mailbox Capacity",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $json;\nconst hooks = Array.isArray(row.hooks) ? row.hooks : [];\nconst mailboxes = Array.isArray(row.mailboxes) ? row.mailboxes : [];\nif (mailboxes.length === 0) throw new Error('No mailboxes registered: refusing to silently drop queued hooks');\nconst available = mailboxes.filter(m => Number(m.sent_today || 0) < Number(m.daily_cap || 0));\nif (available.length === 0) return [{json: {capacity_available: false, queued_count: hooks.length, reason: 'all_mailboxes_capped'}}];\nlet cursor = 0;\nreturn hooks.map((hook, index) => {\n  const mailbox = available[cursor % available.length]; cursor += 1;\n  return {json: {...hook, capacity_available: true, mailbox_id: mailbox.mailbox_id, scheduled_for: new Date(Date.now() + index * 5 * 60000).toISOString(), dry_run: ($env.DRY_RUN || 'true') !== 'false'}};\n});"
+      },
+      "id": "26e7fa66-3bf0-5a73-92eb-ad99f0d5fada",
+      "name": "Assign Round-robin Mailboxes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7634b770-3ee7-50b5-a877-94e2ac4b796d",
+              "leftValue": "={{ $json.capacity_available }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "04d3dd0b-9213-5685-bcc2-74fa31328b61",
+      "name": "Capacity Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.audit_log (workflow_name, event_type, status, details) VALUES ('03_deliverability_sim', 'capacity_check', 'queued', jsonb_build_object('queued_count', '={{ $json.queued_count }}', 'reason', 'all_mailboxes_capped'));",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "11bd542b-52a1-5649-8d1f-729a445f8fdd",
+      "name": "Log All Mailboxes Capped",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        180
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (\n  INSERT INTO agency_outbound.send_queue (prospect_id, hook_id, mailbox_id, scheduled_for, status)\n  VALUES ('={{ $json.prospect_id }}', '={{ $json.hook_id || $json.id }}', '={{ $json.mailbox_id }}', '={{ $json.scheduled_for }}'::timestamptz, 'queued')\n  RETURNING id\n)\nSELECT id AS send_queue_id, '={{ $json.prospect_id }}'::bigint AS prospect_id, '={{ $json.hook_id || $json.id }}'::bigint AS hook_id, '={{ $json.mailbox_id }}' AS mailbox_id, '={{ $json.scheduled_for }}'::timestamptz AS scheduled_for, '={{ $json.dry_run }}'::boolean AS dry_run FROM inserted;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "d16b34ca-cbe1-58c2-af80-f3d8e6b66316",
+      "name": "Insert Send Queue Row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.mailbox_registry SET sent_today = sent_today + 1 WHERE mailbox_id = '={{ $json.mailbox_id }}' RETURNING mailbox_id\n)\nSELECT '={{ $json.send_queue_id }}'::bigint AS send_queue_id, '={{ $json.prospect_id }}'::bigint AS prospect_id, '={{ $json.hook_id }}'::bigint AS hook_id, mailbox_id, '={{ $json.scheduled_for }}'::timestamptz AS scheduled_for, '={{ $json.dry_run }}'::boolean AS dry_run FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "a0df6ed6-9acc-5230-bdba-9cac4caaacb0",
+      "name": "Increment Mailbox Counter",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.personalization_hooks SET status = 'queued' WHERE id = '={{ $json.hook_id }}' RETURNING id\n)\nSELECT '={{ $json.send_queue_id }}'::bigint AS send_queue_id, '={{ $json.prospect_id }}'::bigint AS prospect_id, id AS hook_id, '={{ $json.mailbox_id }}' AS mailbox_id, '={{ $json.scheduled_for }}'::timestamptz AS scheduled_for, '={{ $json.dry_run }}'::boolean AS dry_run FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "4f345777-c4cc-5d59-b53c-acbfa52a963c",
+      "name": "Mark Hook Queued",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1540,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: {...$json, email_subject: 'A practical support-operations idea', email_body: 'This is a controlled sandbox message generated by the concept project. Review and approve before any real send.'}}];"
+      },
+      "id": "bf295a15-bf3a-583a-b571-0ce73e0acc1e",
+      "name": "Prepare Sandbox Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1ba4d753-4d32-5620-9d31-c24be26a9086",
+              "leftValue": "={{ $json.dry_run }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c9bb4c84-8db0-5813-b825-1c5881626819",
+      "name": "Send Sandbox Mail?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $env.SANDBOX_MAILBOX_TO || 'pilot@example.com' }}",
+        "subject": "={{ $json.email_subject || 'Pilot outbound message' }}",
+        "message": "={{ $json.email_body || 'Dry-run disabled: sandbox send path.' }}",
+        "options": {}
+      },
+      "id": "62fd80f4-82e3-5a8b-b739-80db8bf13681",
+      "name": "Send Through One Sandbox Mailbox",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2200,
+        -120
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_OAUTH2_CREDENTIAL_ID",
+          "name": "Sandbox Gmail OAuth2"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.send_queue SET status = 'sent', sent_at = NOW() WHERE id = '={{ $json.send_queue_id }}' RETURNING id\n)\nSELECT id AS send_queue_id, '={{ $json.prospect_id }}'::bigint AS prospect_id, '={{ $json.hook_id }}'::bigint AS hook_id, '={{ $json.mailbox_id }}' AS mailbox_id, TRUE AS sent FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "98283bd6-7925-57e5-9572-c510ce7f9837",
+      "name": "Mark Queue Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2420,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.audit_log (workflow_name, event_type, status, details) VALUES ('03_deliverability_sim', 'send_queue', 'dry_run', jsonb_build_object('send_queue_id', '={{ $json.send_queue_id }}', 'mailbox_id', '={{ $json.mailbox_id }}'));",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "ef1a4783-a9bd-59ce-81be-1511e0655673",
+      "name": "Record Dry-run Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**SIMULATED** — round-robin assignment, daily cap enforcement, staggering, and reset logic are real and testable against mock mailboxes. No purchased domains, mailbox swarm, warm-up network, or Smartlead/Instantly subscription is used. `DRY_RUN=true` by default; the optional Gmail branch is one sandbox mailbox only.",
+        "height": 250,
+        "width": 720
+      },
+      "id": "a5592ffb-da3a-5a30-9f2b-0c715eb4ae64",
+      "name": "Simulated — Deliverability Infrastructure",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        700,
+        360
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Poll Queued Hooks": {
+      "main": [
+        [
+          {
+            "node": "Reset Daily Mailbox Caps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset Daily Mailbox Caps": {
+      "main": [
+        [
+          {
+            "node": "Fetch Hooks and Mailbox Capacity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Hooks and Mailbox Capacity": {
+      "main": [
+        [
+          {
+            "node": "Assign Round-robin Mailboxes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Round-robin Mailboxes": {
+      "main": [
+        [
+          {
+            "node": "Capacity Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capacity Available?": {
+      "main": [
+        [
+          {
+            "node": "Insert Send Queue Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log All Mailboxes Capped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Send Queue Row": {
+      "main": [
+        [
+          {
+            "node": "Increment Mailbox Counter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment Mailbox Counter": {
+      "main": [
+        [
+          {
+            "node": "Mark Hook Queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Hook Queued": {
+      "main": [
+        [
+          {
+            "node": "Prepare Sandbox Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Sandbox Message": {
+      "main": [
+        [
+          {
+            "node": "Send Sandbox Mail?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Sandbox Mail?": {
+      "main": [
+        [
+          {
+            "node": "Send Through One Sandbox Mailbox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Dry-run Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Through One Sandbox Mailbox": {
+      "main": [
+        [
+          {
+            "node": "Mark Queue Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "agency-outbound"
+    },
+    {
+      "name": "concept-project"
+    }
+  ]
+}

@@ -1,0 +1,560 @@
+{
+  "name": "02 — AI Personalization",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 1. Trigger & Mode Config  —  [DETERMINISTIC]\n30-min poll restricted to resolution_tier > 0 prospects only — credits/API calls never spent on unresolved leads. Mode gate for live vs fixture research.",
+        "height": 170,
+        "width": 920,
+        "color": 6
+      },
+      "id": "0b19d92c-0000-0000-0000-000000000000",
+      "name": "SECTION 1 — Trigger & Mode Config",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Research Acquisition  —  [REAL / FIXTURE]\nLive: homepage fetch + HTML-to-text strip (single free research source, no scraping subscription). Fixture: deterministic canned research+hook for demo mode.",
+        "height": 170,
+        "width": 720,
+        "color": 4
+      },
+      "id": "4e3a4228-0000-0000-0000-000000000000",
+      "name": "SECTION 2 — Research Acquisition",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        820,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 3. AI Generation — Gemini  —  [REAL (Agent-Free)]\nTwo single-shot Gemini Flash REST calls with JSON-mode output — deliberately HTTP Request nodes, not an AI Agent. No tool-calling or multi-turn state; this task doesn't justify agent overhead.",
+        "height": 170,
+        "width": 720,
+        "color": 7
+      },
+      "id": "6290226f-0000-0000-0000-000000000000",
+      "name": "SECTION 3 — AI Generation — Gemini",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 4. Offer Logic & Persistence  —  [DETERMINISTIC]\nOffer-angle selection is a plain size threshold rule, not an LLM decision. Hook persisted, prospect status advanced to 'personalized'.",
+        "height": 170,
+        "width": 720,
+        "color": 5
+      },
+      "id": "333499ce-0000-0000-0000-000000000000",
+      "name": "SECTION 4 — Offer Logic & Persistence",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "e03a0944-ce8c-5120-a23a-1f131415ff5f",
+      "name": "Poll New Prospects",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.*, s.company_name, s.company_domain, s.signal_type, s.signal_detail FROM agency_outbound.prospects_enriched p JOIN agency_outbound.signal_events s ON s.id = p.signal_event_id WHERE p.status = 'new' AND p.resolution_tier > 0 ORDER BY p.enriched_at ASC LIMIT 25;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "86fa9775-9071-594b-b374-352528f90424",
+      "name": "Fetch New Prospects",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => ({json: {...i.json, pilot_mode: $env.PILOT_MODE || 'fixture'}}));"
+      },
+      "id": "078fa555-c0e9-58d1-9803-b75d021678f1",
+      "name": "Read Personalization Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1784a61c-5a35-5807-8493-63549e2e3881",
+              "leftValue": "={{ $json.pilot_mode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8cf61586-2319-54d3-a86f-ccc54e16e384",
+      "name": "Use Live Personalization?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://' + $json.company_domain }}",
+        "options": {
+          "timeout": 20000
+        },
+        "responseFormat": "text"
+      },
+      "id": "183fe5fb-6f29-554d-b433-e11b34c6f9df",
+      "name": "Fetch Company Homepage Copy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        -120
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "position",
+        "options": {}
+      },
+      "id": "5921aa70-0ecd-5e10-8af1-6ef2d489b8a5",
+      "name": "Merge Prospect and Homepage",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1080,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = String($json.body || $json.data || ''); const text = html.replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 6000); return [{json: {...$json, homepage_text: text}}];"
+      },
+      "id": "825b5aec-23a9-564b-ac04-75c74760ade5",
+      "name": "Extract Homepage Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/' + ($env.GEMINI_MODEL || 'gemini-3.5-flash-lite') + ':generateContent' }}",
+        "options": {
+          "timeout": 60000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY || 'REPLACE_IN_N8N_CREDENTIAL' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({contents: [{parts: [{text: 'You are a B2B research assistant. Summarize the company value proposition using only the supplied homepage text. Return JSON with keys research_summary and evidence_phrase. Company: ' + $json.company_name + '. Homepage text: ' + ($json.homepage_text || '')}]}], generationConfig: {temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 250}}) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "67a93112-b6ce-5ee1-b4d7-b29cc46f2194",
+      "name": "Gemini — Summarize Value Proposition",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Gemini API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/' + ($env.GEMINI_MODEL || 'gemini-3.5-flash-lite') + ':generateContent' }}",
+        "options": {
+          "timeout": 60000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY || 'REPLACE_IN_N8N_CREDENTIAL' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({contents: [{parts: [{text: 'You are a careful outbound copy assistant. Based only on the provided research summary and signal, draft one concise, non-deceptive pain-point hook for a B2B operations agency. Return JSON with keys pain_point_hook and confidence_note. Research: ' + JSON.stringify($json.candidates || $json) + '. Signal: ' + $json.signal_type}]}], generationConfig: {temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 220}}) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "fa5bdd00-0f6b-5114-b5d1-4a2ea2c32c8d",
+      "name": "Gemini — Generate Pain-Point Hook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1740,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Gemini API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: {...$json, research_summary: 'Fixture summary: the company is visibly investing in customer support capacity and may value faster operating leverage.', pain_point_hook: 'You are adding support capacity; a tighter workflow can help the team absorb demand without adding avoidable coordination overhead.', offer_angle: 'cost_reduction'}}];"
+      },
+      "id": "fa776944-24bd-5c38-926e-8dce8c0fd0a3",
+      "name": "Load Fixture Research and Hook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json;\nlet parsed = response;\ntry { parsed = response.candidates?.[0]?.content?.parts?.[0]?.text ? JSON.parse(response.candidates[0].content.parts[0].text) : response; } catch (e) {}\nconst research_summary = parsed.research_summary || response.research_summary || 'Research unavailable; review manually.';\nconst pain_point_hook = parsed.pain_point_hook || response.pain_point_hook || 'Manual review required before outreach.';\nreturn [{json: {...response, research_summary, pain_point_hook}}];"
+      },
+      "id": "ec735c1a-ea62-50df-ae41-6c0fcfe01fb1",
+      "name": "Normalize AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const size = Number($json.employee_count || $json.company_size || 0); const offer_angle = size > 100 ? 'speed_growth' : 'cost_reduction'; return [{json: {...$json, offer_angle}}];"
+      },
+      "id": "53e980fa-cdcc-51a7-9133-b85c1e78a9bd",
+      "name": "Determine Offer Angle",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (\n  INSERT INTO agency_outbound.personalization_hooks (prospect_id, research_summary, pain_point_hook, offer_angle, status)\n  VALUES ('={{ $json.id || $json.prospect_id }}', '={{ ($json.research_summary || '').replace(/'/g, \"''\") }}', '={{ ($json.pain_point_hook || '').replace(/'/g, \"''\") }}', '={{ $json.offer_angle }}', 'new')\n  RETURNING id\n)\nSELECT id AS hook_id, '={{ $json.id || $json.prospect_id }}'::bigint AS prospect_id, '={{ ($json.research_summary || '').replace(/'/g, \"''\") }}' AS research_summary, '={{ ($json.pain_point_hook || '').replace(/'/g, \"''\") }}' AS pain_point_hook, '={{ $json.offer_angle }}' AS offer_angle FROM inserted;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "e3f19eac-c275-5172-8888-9bbe51da8340",
+      "name": "Insert Personalization Hook",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2400,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.prospects_enriched SET status = 'personalized' WHERE id = '={{ $json.prospect_id }}' RETURNING id\n)\nSELECT id AS prospect_id, '={{ $json.hook_id }}'::bigint AS hook_id, '={{ $json.offer_angle }}' AS offer_angle FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "1757bb2a-8c7c-52ef-af64-b6d5f6422f94",
+      "name": "Mark Prospect Personalized",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**REAL** — two single-shot Gemini REST calls with JSON-mode output and deterministic offer-angle rules. No AI Agent node, no tools, and no fake review-scraping integration. Homepage copy is the only research source in this MVP.",
+        "height": 230,
+        "width": 650
+      },
+      "id": "f90d8a9d-607d-5e2e-b8eb-864700108495",
+      "name": "Real — AI Research and Hooks",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        340
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Poll New Prospects": {
+      "main": [
+        [
+          {
+            "node": "Fetch New Prospects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch New Prospects": {
+      "main": [
+        [
+          {
+            "node": "Read Personalization Mode",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Prospect and Homepage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Personalization Mode": {
+      "main": [
+        [
+          {
+            "node": "Use Live Personalization?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Live Personalization?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Company Homepage Copy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Fixture Research and Hook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Company Homepage Copy": {
+      "main": [
+        [
+          {
+            "node": "Merge Prospect and Homepage",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Prospect and Homepage": {
+      "main": [
+        [
+          {
+            "node": "Extract Homepage Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Homepage Text": {
+      "main": [
+        [
+          {
+            "node": "Gemini — Summarize Value Proposition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini — Summarize Value Proposition": {
+      "main": [
+        [
+          {
+            "node": "Gemini — Generate Pain-Point Hook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini — Generate Pain-Point Hook": {
+      "main": [
+        [
+          {
+            "node": "Normalize AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Fixture Research and Hook": {
+      "main": [
+        [
+          {
+            "node": "Normalize AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize AI Output": {
+      "main": [
+        [
+          {
+            "node": "Determine Offer Angle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Offer Angle": {
+      "main": [
+        [
+          {
+            "node": "Insert Personalization Hook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Personalization Hook": {
+      "main": [
+        [
+          {
+            "node": "Mark Prospect Personalized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "agency-outbound"
+    },
+    {
+      "name": "concept-project"
+    }
+  ]
+}

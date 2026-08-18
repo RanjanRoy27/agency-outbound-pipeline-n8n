@@ -1,0 +1,682 @@
+{
+  "name": "01 — Waterfall Enrichment",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "### 1. Trigger & Mode Config  —  [DETERMINISTIC]\n30-min poll of new signal_events from Postgres. PILOT_MODE gate decides live paid-API waterfall vs fixture enrichment.",
+        "height": 170,
+        "width": 920,
+        "color": 6
+      },
+      "id": "4351819f-0000-0000-0000-000000000000",
+      "name": "SECTION 1 — Trigger & Mode Config",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 2. Waterfall Tier 1 — Apollo  —  [REAL / FIXTURE]\nFirst and cheapest enrichment tier. Apollo free-tier email lookup fires first; only escalates to Tier 2 if no email is returned — this is the credit-gate.",
+        "height": 170,
+        "width": 720,
+        "color": 4
+      },
+      "id": "6bbf78f5-0000-0000-0000-000000000000",
+      "name": "SECTION 2 — Waterfall Tier 1 — Apollo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        820,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 3. Waterfall Tier 2 — Hunter Fallback  —  [REAL]\nFallback fires only on Apollo miss. Keeps paid/rate-limited calls scoped to the minority of prospects that actually need it.",
+        "height": 170,
+        "width": 500,
+        "color": 4
+      },
+      "id": "a0100f99-0000-0000-0000-000000000000",
+      "name": "SECTION 3 — Waterfall Tier 2 — Hunter Fallback",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1470,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 4. Resolution & Validation  —  [DETERMINISTIC]\nDeterministic selection of best candidate + MX-record validation before any record is trusted enough to persist. Resolution tier drives downstream personalization eligibility.",
+        "height": 170,
+        "width": 720,
+        "color": 6
+      },
+      "id": "0166c3f4-0000-0000-0000-000000000000",
+      "name": "SECTION 4 — Resolution & Validation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1910,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 5. Persistence & Cost Tracking  —  [DETERMINISTIC]\nWrites enriched prospect + marks source signal consumed + logs per-call cost for unit-economics reporting (cost-gated architecture proof).",
+        "height": 170,
+        "width": 720,
+        "color": 5
+      },
+      "id": "672fa65d-0000-0000-0000-000000000000",
+      "name": "SECTION 5 — Persistence & Cost Tracking",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2570,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "f90f0b0c-0601-5ce3-a579-cd89ae9722d2",
+      "name": "Poll New Signal Events",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM agency_outbound.signal_events WHERE status = 'new' ORDER BY detected_at ASC LIMIT 25;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "8ed95f85-b7d1-5bc9-8a5f-3aa733a16e4b",
+      "name": "Fetch New Signal Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => ({json: {...i.json, pilot_mode: $env.PILOT_MODE || 'fixture'}}));"
+      },
+      "id": "ee52cda6-c0bb-5d7a-a88e-f7418c1660c8",
+      "name": "Read Enrichment Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "406a4820-679b-5bf4-b223-c1504d1b6cef",
+              "leftValue": "={{ $json.pilot_mode }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a8984e6c-0147-50bd-91b6-9c83a86cae28",
+      "name": "Use Live Enrichment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match",
+        "options": {
+          "timeout": 30000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $env.APOLLO_API_KEY || 'REPLACE_IN_N8N_CREDENTIAL' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({domain: $json.company_domain, reveal_personal_emails: true, first_name: $json.full_name ? $json.full_name.split(' ')[0] : undefined}) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "6bb44493-6fc6-53b7-b913-9cd7a7882ca3",
+      "name": "Check Apollo for Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Apollo API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: {person: {first_name: 'Alex', last_name: 'Morgan', email: 'alex.morgan@' + ($json.company_domain || 'example.com'), title: 'Head of Support', linkedin_url: 'https://www.linkedin.com/in/alex-morgan'}, credits_consumed: 1}}];"
+      },
+      "id": "48aa634b-107f-5bbc-a995-aa498d2e08a2",
+      "name": "Load Fixture Apollo Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "position",
+        "options": {}
+      },
+      "id": "193f04a7-6f05-5038-9998-e5ad54888a5b",
+      "name": "Merge Enrichment Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b7fcb585-c228-52e1-a3be-1e21ad0289c1",
+              "leftValue": "={{ $json.person && $json.person.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d495f65b-d2e5-51bf-80a9-a2448485ffc0",
+      "name": "Apollo Returned Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.hunter.io/v2/domain-search",
+        "options": {
+          "timeout": 30000
+        },
+        "responseFormat": "json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY",
+              "value": "={{ $env.HUNTER_API_KEY || 'REPLACE_IN_N8N_CREDENTIAL' }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "={{ $json.company_domain }}"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "id": "f4d4e47e-1589-5b99-baf3-eabdf8dfe5fe",
+      "name": "Check Hunter Domain Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1510,
+        120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Hunter API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "230c2201-0d64-5fa0-bbe9-2ce769abc44d",
+      "name": "Merge Apollo and Hunter Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1730,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $json;\nconst person = row.person || {};\nconst hunter = row.data || row;\nconst email = person.email || person.email_address || (hunter.emails && hunter.emails[0] && hunter.emails[0].value) || null;\nconst fullName = [person.first_name || (hunter.emails && hunter.emails[0] && hunter.emails[0].first_name), person.last_name || (hunter.emails && hunter.emails[0] && hunter.emails[0].last_name)].filter(Boolean).join(' ') || 'Unresolved contact';\nconst source = person.email ? 'apollo' : email ? 'hunter' : 'unresolved';\nconst tier = person.email ? 1 : email ? 2 : 0;\nreturn [{json: {...row, full_name: fullName, email, email_source: source, resolution_tier: tier, resolution_cost: Number(row.credits_consumed || (tier === 2 ? 1 : 0)), title: person.title || (hunter.emails && hunter.emails[0] && hunter.emails[0].position) || null, linkedin_url: person.linkedin_url || (hunter.emails && hunter.emails[0] && hunter.emails[0].linkedin) || null}}];"
+      },
+      "id": "f85e029a-4797-5cf0-82c0-a212870ea72c",
+      "name": "Select Best Enriched Prospect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1950,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const dns = require('dns').promises;\nconst domain = String($json.company_domain || '').trim();\nlet mx_verified = false;\ntry { mx_verified = (await dns.resolveMx(domain)).length > 0; } catch (e) { mx_verified = false; }\nreturn [{json: {...$json, mx_verified}}];"
+      },
+      "id": "7b471ec0-dc0d-56d2-afab-91beba40416f",
+      "name": "Check MX Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2170,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8e1354ae-4b60-5506-a4b6-7d23f72f09f8",
+              "name": "email_source",
+              "type": "string",
+              "value": "={{ $json.email_source || 'unresolved' }}"
+            },
+            {
+              "id": "730c003e-2136-584f-84ac-ff45e7c09a68",
+              "name": "resolution_cost",
+              "type": "number",
+              "value": "={{ Number($json.resolution_cost || 0) }}"
+            },
+            {
+              "id": "f269973e-396e-5b1f-bde3-9bdb0f7dac74",
+              "name": "mx_verified",
+              "type": "boolean",
+              "value": "={{ Boolean($json.mx_verified) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "528999ca-39c9-5f3b-8a81-ef4e70f9c85e",
+      "name": "Set Resolution Tier",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2390,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH inserted AS (\n  INSERT INTO agency_outbound.prospects_enriched (signal_event_id, full_name, email, email_source, resolution_tier, resolution_cost, title, linkedin_url, mx_verified, status)\n  VALUES ('={{ $json.id }}', '={{ ($json.full_name || '').replace(/'/g, \"''\") }}', NULLIF('={{ $json.email || '' }}',''), '={{ $json.email_source }}', '={{ Number($json.resolution_tier || 0) }}', '={{ Number($json.resolution_cost || 0) }}', NULLIF('={{ ($json.title || '').replace(/'/g, \"''\") }}',''), NULLIF('={{ $json.linkedin_url || '' }}',''), '={{ Boolean($json.mx_verified) }}', 'new')\n  RETURNING id\n)\nSELECT id AS prospect_id, '={{ $json.id }}'::bigint AS signal_event_id, '={{ $json.email_source }}' AS email_source, '={{ Number($json.resolution_cost || 0) }}'::numeric AS resolution_cost, '={{ Boolean($json.mx_verified) }}'::boolean AS mx_verified FROM inserted;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "bcd7ca86-1f77-5dcb-a526-3c55f62e5327",
+      "name": "Insert Enriched Prospect",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2610,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH updated AS (\n  UPDATE agency_outbound.signal_events SET status = 'enriched' WHERE id = '={{ $json.signal_event_id }}' RETURNING id\n)\nSELECT id AS signal_event_id, '={{ $json.prospect_id }}'::bigint AS prospect_id, '={{ $json.email_source }}' AS email_source, '={{ Number($json.resolution_cost || 0) }}'::numeric AS resolution_cost, '={{ Boolean($json.mx_verified) }}'::boolean AS mx_verified FROM updated;",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "2a3aaf71-6035-5314-9837-bca4b40fb163",
+      "name": "Mark Signal Enriched",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2830,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO agency_outbound.integration_usage (workflow_name, provider, operation, rows_processed, provider_units, estimated_cost_usd, metadata) VALUES ('01_waterfall_enrich', '={{ $json.email_source || 'unresolved' }}', 'email_resolution', 1, '={{ Number($json.resolution_cost || 0) }}', 0, jsonb_build_object('mx_verified', '={{ Boolean($json.mx_verified) }}'));",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "id": "ace8775a-f87c-5b85-8e3e-5a7fe8f10ee4",
+      "name": "Record Enrichment Cost",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3050,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_CREDENTIAL_ID",
+          "name": "Agency Outbound Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**REAL** — Apollo People Enrichment is attempted first; Hunter Domain Search is the fallback. Resolution tier and observed provider units are logged. The MX check is a lightweight DNS MX lookup, not a full SMTP handshake. Set `PILOT_MODE=fixture` for deterministic pilot data.",
+        "height": 240,
+        "width": 650
+      },
+      "id": "f88f412d-cd81-524e-954c-4429d1a6e563",
+      "name": "Real — Waterfall Enrichment",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        340
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Poll New Signal Events": {
+      "main": [
+        [
+          {
+            "node": "Fetch New Signal Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch New Signal Events": {
+      "main": [
+        [
+          {
+            "node": "Read Enrichment Mode",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Enrichment Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Enrichment Mode": {
+      "main": [
+        [
+          {
+            "node": "Use Live Enrichment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Live Enrichment?": {
+      "main": [
+        [
+          {
+            "node": "Check Apollo for Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Fixture Apollo Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Apollo for Email": {
+      "main": [
+        [
+          {
+            "node": "Merge Enrichment Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Load Fixture Apollo Result": {
+      "main": [
+        [
+          {
+            "node": "Merge Enrichment Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Enrichment Context": {
+      "main": [
+        [
+          {
+            "node": "Apollo Returned Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo Returned Email?": {
+      "main": [
+        [
+          {
+            "node": "Merge Apollo and Hunter Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Hunter Domain Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Hunter Domain Search": {
+      "main": [
+        [
+          {
+            "node": "Merge Apollo and Hunter Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Apollo and Hunter Results": {
+      "main": [
+        [
+          {
+            "node": "Select Best Enriched Prospect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Best Enriched Prospect": {
+      "main": [
+        [
+          {
+            "node": "Check MX Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check MX Records": {
+      "main": [
+        [
+          {
+            "node": "Set Resolution Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Resolution Tier": {
+      "main": [
+        [
+          {
+            "node": "Insert Enriched Prospect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Enriched Prospect": {
+      "main": [
+        [
+          {
+            "node": "Mark Signal Enriched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Signal Enriched": {
+      "main": [
+        [
+          {
+            "node": "Record Enrichment Cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "agency-outbound"
+    },
+    {
+      "name": "concept-project"
+    }
+  ]
+}
