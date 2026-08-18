@@ -1,0 +1,24 @@
+[
+  {
+    "name": "interested",
+    "payload": {
+      "raw_reply_text": "Yes, this is interesting. Can we talk next week?",
+      "lead_name": "Alex Morgan",
+      "lead_email": "alex.morgan@example.com"
+    }
+  },
+  {
+    "name": "out_of_office",
+    "payload": {
+      "raw_reply_text": "I am out of office until Monday.",
+      "lead_name": "Taylor Lee",
+      "lead_email": "taylor.lee@example.com"
+    }
+  },
+  {
+    "name": "malformed",
+    "payload": {
+      "lead_name": "Missing Reply Text"
+    }
+  }
+]
