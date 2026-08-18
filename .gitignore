@@ -1,0 +1,26 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+
+# n8n exports that may contain credentials or account identifiers
+credentials*.json
+exported-credentials*.json
+n8n-credentials*.json
+
+# Pilot evidence that may contain real rows or raw replies
+pilot-evidence/
+execution-exports/
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/
