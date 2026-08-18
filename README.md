@@ -112,13 +112,7 @@ n8n supports editor import/export of workflow JSON and also documents public API
 | CRM destination | Simulated Postgres adapter |
 | Slack SLA alert | Real webhook path when configured |
 
-## Portfolio positioning
 
-The strongest case-study claim is not “I built an AI outbound agent.” It is:
-
-> **I designed a safe, auditable signal-to-CRM pipeline in n8n with independent workflow modules, a Postgres state machine, a measurable Apollo-to-Hunter waterfall, cap-aware deliverability simulation, single-shot AI controls, and an adapter boundary for a real CRM.**
-
-The evidence packet should include the validator output, schema migration result, n8n execution IDs, table counts, provider usage observations, reviewed AI hooks, cap-enforcement examples, and a clear real-versus-simulated matrix.
 
 ## References
 
